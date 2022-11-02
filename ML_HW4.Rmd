@@ -1,0 +1,165 @@
+---
+title: "ML_HW4"
+date: "2022-11-02"
+output: 
+  html_document:
+   toc: true
+   toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, message = F, warning = F}
+library(tidyverse)
+library(tidymodels)
+library(discrim)
+library(corrplot)
+library(klaR)
+
+set.seed(0)
+
+titanic <- read.csv("titanic.csv")
+
+titanic$survived <- as.factor(titanic$survived) 
+titanic$pclass <- as.factor(titanic$pclass)
+
+```
+
+
+# Coding questions
+
+## Question 1 - Splitting data
+
+```{r, message = F, warning = F}
+titanic_split <- initial_split(titanic, prop = 0.80, strata = survived)
+titanic_train <- training(titanic_split)
+titanic_test  <- testing(titanic_split)
+
+#Checking if the training and test sets have the appropriate number of observations.
+dim(titanic_train) #712 = this is 80% of 891
+dim(titanic_test) #179 = this is 20% of 891
+```
+
+
+## Question 2 - k-fold cross validation (k = 10)
+
+```{r, message = F, warning = F}
+#Creating a recipe similar to recipe in HW3
+titanic_recipe <- recipe(survived ~ pclass + sex + age + sib_sp + parch + fare, data = titanic_train) %>%
+  step_impute_linear(age, impute_with = imp_vars(pclass,sex)) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_interact(terms = ~ starts_with("sex"):fare) %>%
+  step_interact(terms = ~ age:fare)
+
+#Folding the data with k = 10
+titanic_fold <- vfold_cv(titanic_train, v =10)
+titanic_fold
+
+```
+
+
+## Question 3 - Cross validation Vs Validation set.
+
+What we are doing in 2 is we are randomly splitting the training data into 10 different groups of roughly equal size. 
+
+K-fold cross validation is the process of assessing the generalization performance of a model by getting a better estimate of the true MSE. By splitting the data into k folds, the process is:
+
+  - hold out one of the folds as a validation set
+  
+  - fit the model on the other k-1 folds, and compute the MSE on the hold out fold.
+  
+  - repeat the steps above for each of the k folds to get k different MSEs.
+  
+  - take the average of the k different MSEs.
+
+If we did use the entire training set, the resampling method is the validation set approach. The validation set approach can have a highly variable estimate of the test MSE because it is largely dependent on the training/validation split, which is not the case for the k-fold cross-validation. 
+
+## Question 4 - Setting up worflows
+
+```{r, message = F, warning = F}
+#logistic
+logit_model <- logistic_reg() %>% set_engine("glm") %>% set_mode("classification")
+logit_workflow <- workflow() %>%  add_model(logit_model) %>%  add_recipe(titanic_recipe)
+
+#LDA
+
+lda_model <- discrim_linear()  %>% set_mode("classification") %>% set_engine("MASS")
+lda_workflow <- workflow() %>%  add_model(lda_model) %>%  add_recipe(titanic_recipe)
+
+#QDA
+qda_model <- discrim_quad()  %>% set_mode("classification") %>% set_engine("MASS")
+qda_workflow <- workflow() %>%  add_model(qda_model) %>%  add_recipe(titanic_recipe)
+
+```
+
+Because we have k = 10 folds, we are fitting 10 models for each workflow, which means we we are fitting 30 models in total for the 3 workflows.
+
+## Question 5 - Fitting the models to the folded data.
+
+```{r, message = F, warning = F}
+logit_res <- tune_grid(object = logit_workflow, resamples = titanic_fold)
+lda_res <- tune_grid(object = lda_workflow, resamples = titanic_fold)
+qda_res <- tune_grid(object = qda_workflow, resamples = titanic_fold)
+
+```
+
+## Question 6 - Printing the mean and standard errors of performance metric: Accuracy
+
+```{r, message = F, warning = F}
+logit_metrics <- collect_metrics(logit_res)
+logit_metrics
+
+lda_metrics <- collect_metrics(lda_res)
+lda_metrics
+
+qda_metrics <- collect_metrics(qda_res)
+qda_metrics
+```
+
+Because logit has the highest mean accuracy, and the standard errors are quite similar across the 3 models, I choose logit as the best performing model.
+
+## Question 7 - Fitting the best performing model (logit) to the training set
+
+```{r, message = F, warning = F}
+logit_fit <- fit(logit_workflow, titanic_train)
+
+```
+
+
+## Question 8 - Fitting the best performing model (logit) to the test set
+
+```{r, message = F, warning = F}
+logit_pred_test <- predict(logit_fit, new_data = titanic_test %>% dplyr::select(-survived) , type = "prob")
+logit_pred_test <- bind_cols(logit_pred_test, titanic_test %>% dplyr:: select(survived))
+model_data_metrics <- metric_set(roc_auc,accuracy)
+roc_auc(logit_pred_test, truth = survived, estimate = .pred_No)
+
+logit_acc_test  <- augment(logit_fit, new_data = titanic_test) %>% accuracy(truth = survived, estimate = .pred_class)
+logit_acc_test
+
+```
+
+
+The test accuracy of the model (.78) is lower than the average accuracy across folds (0.81). This is not surprising because the model was trained with the folds data.
+
+# 231 students only:
+
+## Question 9
+$$ Min_\beta \sum\epsilon_i^2 = Min_\beta \sum(y_i-\beta)^2$$
+$$FOC_{\beta}: -2\sum(y_i-\beta) = 0$$ Which implies that the least square estimator is: $$ \hat{\beta} = \frac{1}{n} \sum y_i $$  
+
+## Question 10
+We know that $$\beta^{(1)} = \frac{1}{n-1} \sum_{i=2,...,n} y_i$ \text{ and } \beta^{(2)} = \frac{1}{n-1} \sum_{i=1,3,..,n} y_i$$
+So $$cov(\beta^{(1)}, \beta^{(2)}) = cov(\frac{1}{n-1} \sum_{i=2,...,n} y_i, \frac{1}{n-1} \sum_{i=1,3,...,n} y_i)$$
+$$cov(\beta^{(1)}, \beta^{(2)}) = (\frac{1}{n-1})^2 cov( \sum_{i=2,...,n} y_i, \sum_{i=1,3,...,n} y_i)$$
+$$ cov(\beta^{(1)}, \beta^{(2)}) = (\frac{1}{n-1})^2 (n-2) cov(y_i,y_j) = \frac{n-2}{(n-1)^2} Var(y_i) $$
+$$cov(\beta^{(1)}, \beta^{(2)}) =  \frac{n-2}{(n-1)^2} \sigma^2$$
+
+
+
+
+
+

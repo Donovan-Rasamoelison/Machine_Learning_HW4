@@ -26,6 +26,7 @@ titanic <- read.csv("titanic.csv")
 titanic$survived <- as.factor(titanic$survived) 
 titanic$pclass <- as.factor(titanic$pclass)
 
+print("1")
 ```
 
 
